@@ -1,3 +1,5 @@
+<img src="logo.png" alt="HAHA Logo" height="250px">
+
 # HAHA - Highly Available Home Assistant
 A [Docker swarm](https://docs.docker.com/engine/swarm/) solution allowing to run Home Assistant in a highly available, failover configuration. 
 
@@ -55,7 +57,7 @@ Create `hacluster` group in the `/etc/ansible/hosts` file. Add your cluster node
 ```
 
 ### Setup HAHA cluster playbook
-This playbook adds the nodes to a trusted Gluster pool, creates a Gluster volume and mounts it on all nodes. It then copies the default configuration files for Home Assistant and Mosquitto. Then, it sets up a cron job on all nodes to periodically restart the Avahi service. Finally, it initializes a Docker swarm, joins all nodes to it and starts the HAHA stack on it. Run the playbook using the command bellow.
+This playbook adds the nodes to a trusted Gluster pool, creates a Gluster volume and mounts it on all nodes. It then copies the default configuration files for Home Assistant and Mosquitto. Then, it sets up a cron job on all nodes to periodically restart the Avahi service. Finally, it initializes a Docker swarm, joins all nodes to it and starts the HAHA stack on it. Run the playbook using the command below.
 
 `$ ansible-playbook setup-hacluster.yml`
 
