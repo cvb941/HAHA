@@ -1,0 +1,120 @@
+version: '3.7'
+services:
+  mariadbseed:
+    image: cvb941/mariadb-galera-swarm-rpi:10.1
+    environment:
+      - XTRABACKUP_PASSWORD_FILE=/run/secrets/xtrabackup_password
+      - MYSQL_USER=user123
+      - MYSQL_PASSWORD_FILE=/run/secrets/mysql_password
+      - MYSQL_DATABASE=homeassistant
+      - MYSQL_ROOT_HOST=%
+      - MYSQL_ROOT_PASSWORD_FILE=/run/secrets/mysql_root_password
+      - NODE_ADDRESS=^10.0.*.*
+      - TRACE=y
+    command: seed
+    deploy:
+      replicas: 1
+    secrets:
+      - xtrabackup_password
+      - mysql_password
+      - mysql_root_password
+    volumes:
+      - mysql-data:/var/lib/mysql
+  mariadbnode:
+    image: cvb941/mariadb-galera-swarm-rpi:10.1
+    environment:
+      - XTRABACKUP_PASSWORD_FILE=/run/secrets/xtrabackup_password
+      - MYSQL_USER=user123
+      - MYSQL_PASSWORD_FILE=/run/secrets/mysql_password
+      - MYSQL_DATABASE=homeassistant
+      - MYSQL_ROOT_HOST=%
+      - MYSQL_ROOT_PASSWORD_FILE=/run/secrets/mysql_root_password
+      - NODE_ADDRESS=^10.0.*.*
+      - HEALTHY_WHILE_BOOTING=1
+      - TRACE=y
+    command: node mariadbseed,mariadbnode
+    deploy:
+      replicas: 0
+      endpoint_mode: dnsrr
+    secrets:
+      - xtrabackup_password
+    volumes:
+      - mysql-data:/var/lib/mysql
+    ports:
+      - target: 3306
+        published: 3306
+        protocol: tcp
+        mode: host
+  homeassistant:
+    container_name: home-assistant
+    image: homeassistant/raspberrypi3-homeassistant:0.95.4
+    volumes:
+      - /var/hacluster/homeassistant:/config
+      - /etc/localtime:/etc/localtime:ro
+    restart: always
+    ports:
+      - target: 8123
+        published: 8123
+        protocol: tcp
+        # mode: host
+    depends_on:
+      - mariadbnode
+      - mosquitto
+    deploy:
+      replicas: 0
+  mosquitto:
+    image: eclipse-mosquitto
+    container_name: mosquitto
+    restart: always
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - /var/hacluster/mosquitto:/mosquitto
+    deploy:
+      replicas: 1
+  portainer:
+    image: portainer/portainer
+    restart: always
+    container_name: "portainer-app"
+    ports:
+      - 9000:9000
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/portainer/data:/data
+    networks:
+      - agent_network
+  portainer_agent:
+    image: portainer/agent
+    environment:
+      # REQUIRED: Should be equal to the service name prefixed by "tasks." when
+      # deployed inside an overlay network
+      AGENT_CLUSTER_ADDR: tasks.portainer_agent
+      # AGENT_PORT: 9001
+      # LOG_LEVEL: debug
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/docker/volumes:/var/lib/docker/volumes
+    networks:
+      - agent_network
+    deploy:
+      mode: global
+      placement:
+        constraints: [node.platform.os == linux]
+
+networks:
+  agent_network:
+    driver: overlay
+
+secrets:
+  xtrabackup_password:
+    file: .secrets/xtrabackup_password
+  mysql_password:
+    file: .secrets/mysql_password
+  mysql_root_password:
+    file: .secrets/mysql_root_password
+
+volumes:
+  mysql-data:
+    name: '{{.Service.Name}}-{{.Task.Slot}}-data'
+    driver: local

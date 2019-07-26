@@ -1,0 +1,44 @@
+---
+- hosts: hacluster
+  gather_facts: False
+  become: true
+  tasks:
+    # - name: Remove the hacluster docker stack
+    #   docker_stack:
+    #     state: absent
+    #     name: hacluster
+    - name: "Get docker info"
+      shell: docker info
+      register: docker_info
+      changed_when: false
+    - name: Remove the hacluster docker stack
+      command: docker stack rm hacluster
+      when: docker_info.stdout.find("Swarm{{':'}} inactive") == -1
+      run_once: true
+    # - name: Dissasemble docker swarm
+    #   docker_swarm:
+    #     state: absent
+    #     force: true
+    - name: Leave docker swarm
+      command: docker swarm leave --force
+      when: docker_info.stdout.find("Swarm{{':'}} inactive") == -1
+    # - name: Remove the home assistant directory
+    #   file:
+    #     state: absent
+    #     path: "/var/hacluster/homeassistant/"
+    - name: Un-mount home assistant gluster volume
+      mount:
+        path: /var/hacluster/homeassistant
+        src: localhost:/gluster-homeassistant
+        fstype: glusterfs
+        state: absent
+    - name: Remove home assistant gluster volume
+      gluster_volume:
+        state: absent
+        force: yes
+        name: gluster-homeassistant
+      run_once: true
+    - name: Remove cron job to restart Avahi service every minute
+      cron:
+        name: "Restart Avahi for hacluster"
+        state: absent

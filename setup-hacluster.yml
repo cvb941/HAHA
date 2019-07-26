@@ -1,0 +1,144 @@
+---
+- hosts: hacluster
+  become: true
+  tasks:
+    - name: Ensure portainer data directory exists for portainer volume bind
+      file:
+        state: directory
+        path: "/opt/portainer/data"
+    - name: Install gluster from apt
+      apt:
+        name: glusterfs-server
+    - name: Start gluster service
+      service:
+        name: glusterfs-server
+        state: started
+    - name: Create brick directory
+      file:
+        path: /opt/brick1/gluster-homeassistant
+        state: directory
+        recurse: yes
+    - name: Create home assistant gluster volume
+      gluster_volume:
+        state: present
+        name: gluster-homeassistant
+        bricks: /opt/brick1/gluster-homeassistant
+        rebalance: yes
+        cluster: "{{ groups['hacluster'] }}"
+        force: yes
+      run_once: true
+    - name: Start home assistant gluster volume
+      gluster_volume:
+        state: started
+        name: gluster-homeassistant
+    - name: Mount home assistant gluster volume
+      mount:
+        path: /var/hacluster
+        src: localhost:/gluster-homeassistant
+        fstype: glusterfs
+        state: mounted
+    - name: Create HA and mosquitto directories and copy default configuration files there
+      block:
+        - name: Create home assistant directory
+          file:
+            state: directory
+            path: "/var/hacluster/homeassistant/"
+        - name: Create mosquitto directory (and config directory)
+          file:
+            state: directory
+            path: "/var/hacluster/mosquitto/config"
+        - name: Copy default mosquitto.conf to cluster
+          copy:
+            src: mosquitto.conf
+            dest: /var/hacluster/mosquitto/config/mosquitto.conf
+            force: yes
+        - name: Copy default configuration.yaml with db recorder to cluster
+          copy:
+            src: configuration.yaml
+            dest: /var/hacluster/homeassistant/configuration.yaml
+            force: no
+        - name: Create groups.yaml file
+          file:
+            state: touch
+            path: /var/hacluster/homeassistant/groups.yaml
+        - name: Create automations.yaml file
+          file:
+            state: touch
+            path: /var/hacluster/homeassistant/automations.yaml
+        - name: Create scripts.yaml file
+          file:
+            state: touch
+            path: /var/hacluster/homeassistant/scripts.yaml
+      run_once: true  #Gluster should be working so we need to copy only to one of the hosts
+    - name: Setup cron job to restart Avahi service every minute
+      cron:
+        name: "Restart Avahi for hacluster"
+        job: "sudo service avahi-daemon restart"
+    
+# Docker part
+- hosts: hacluster[0]
+  become: true
+  tasks:
+    # - name: "Making sure there is only one initial node defined in ansible group hacluster-initial.."
+    #   assert:
+    #     that:
+    #       - "groups['hacluster-initial'] | length == 1"
+    #     msg: "You must define exactly one host in the hacluster-initial group!"
+    - name: Initialize a docker swarm
+      docker_swarm:
+       state: present
+    - name: Parse and save the manager join token
+      shell: docker swarm join-token -q manager
+      register: manager_token
+- hosts: hacluster[1:]
+  become: true
+  tasks:
+    # - debug:
+    #     msg: Join token {{ hostvars[groups['hacluster'][0]]['manager_token']['stdout'] }}
+    # - debug:
+    #     msg: "IP of init host: {{  hostvars[groups['hacluster'][0]]['ansible_default_ipv4']['address'] }}:2377"
+    # - debug:
+    #     msg: "Current ip: {{ ansible_default_ipv4.address }}"
+
+    # - name: Join the docker swarm
+    #   docker_swarm:
+    #     state: join
+    #     join_token: "{{ hostvars[groups['hacluster'][0]]['manager_token']['stdout'] }}"
+    #     remote_addrs: "{{ hostvars[groups['hacluster'][0]]['ansible_default_ipv4']['address'] }}:2377"
+    #     advertise_addr:  "{{ ansible_default_ipv4.address }}"
+    
+    # Use this (from https://caylent.com/manage-docker-swarm-using-ansible/) instead of the official role above due to problems with ansible python modules
+    - name: "Get docker info"
+      shell: docker info
+      register: docker_info
+      changed_when: false
+    - name: "Join the docker swarm"
+      shell: "docker swarm join --token {{ hostvars[groups['hacluster'][0]]['manager_token']['stdout'] }} {{ hostvars[groups['hacluster'][0]]['ansible_default_ipv4']['address'] }}:2377"
+      when: docker_info.stdout.find("Swarm{{ ":" }} inactive") != -1
+      retries: 3
+      delay: 20
+
+- hosts: hacluster[0]
+  become: true
+  tasks:
+    - name: Copy docker-compose
+      copy:
+        src: docker-compose.yml
+        dest: /var/hacluster/docker-compose.yml
+        force: yes
+    - name: Copy secrets
+      copy:
+        src: .secrets/
+        dest: /var/hacluster/.secrets
+        force: yes
+
+    # - name: "Start the hacluster docker-compose stack"
+    #   docker_compose:
+    #     project_src: /var/hacluster/
+    #     state: present
+    
+    # Use this instead of the official role above due to problems with ansible python modules
+    - name: "Start the hacluster docker-compose stack"
+      command: "docker stack deploy -c docker-compose.yml hacluster"
+      args:
+        chdir: /var/hacluster/
