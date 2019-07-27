@@ -3,16 +3,16 @@
 # HAHA - Highly Available Home Assistant
 A [Docker swarm](https://docs.docker.com/engine/swarm/) solution allowing to run Home Assistant in a highly available, failover configuration. 
 
-Uses [Ansible](https://www.ansible.com/) playbooks for setup and removal of the cluster on target devices. [GlusterFS](https://www.gluster.org/) for file synchronization between the nodes.
+Uses [Ansible](https://www.ansible.com/) playbooks for setup and removal of the cluster on target devices. [GlusterFS](https://www.gluster.org/) for real-time file synchronization between the nodes.
 
-Deploys a fully redundant Home Assistant stack with configured [MariaDB Galera Cluster](https://galeracluster.com/) and [Mosquitto](https://mosquitto.org/) MQTT broker.
+Deploys a fully redundant Home Assistant stack with pre-configured [MariaDB Galera Cluster](https://galeracluster.com/) and [Mosquitto](https://mosquitto.org/) MQTT broker.
 
 ## How it works
 This project provides a docker-compose file which deploys a stack with Home Assistant, MariaDB, Mosquitto and optionally Portainer containers.
 
 Even though by itself, Docker provides a failover capability by rescheduling failed containers, it doesn't transfer any state between them. This is important, as without state transfer the new containers would simply start from scratch, everytime a new container would be started.
 
-To achieve state transferring for a stateful application such as this, this project configures a realtime file-based synchronization between the nodes for the Home Assistant directory and Mosquitto retain files, using the network filesystem [GlusterFS](https://www.gluster.org/).
+To achieve state transferring for a stateful application such as this, this project configures a real-time file-based synchronization between the nodes for the Home Assistant directory and Mosquitto retain files, using the network filesystem [GlusterFS](https://www.gluster.org/).
 
 As for the MariaDB database used for the recording of history in Home Assistant, the [Galera Cluster](https://galeracluster.com/) is setup and used in a master/master configuration, synchronizing the databases throughout the cluster.
 
@@ -31,7 +31,7 @@ Experimentally, when turning of the node to which a sensor, flashed with [ESPHom
 ## Limitations
 To have a fully autonomously recoverable setup, a **minimum of three devices** need to be part of the cluster. This is due to how both [Docker swarm](https://docs.docker.com/engine/swarm/) and [GlusterFS](https://www.gluster.org/) work. Simply put, all of the decisions in both systems need to be made with the majority of the nodes in consensus. If there were only two nodes, just one of them failing would already cause the majority to be lost. More info on the algorithm can be found [here](https://docs.docker.com/engine/swarm/raft/ "Raft consensus in swarm mode") and [here](https://docs.gluster.org/en/latest/Administrator%20Guide/arbiter-volumes-and-quorum/#client-quorum "Gluster Docs - Client Quorum").
 
-At this point, this project is made to be used, and has only been tested with Raspberry Pi. Support for other devices and architecture could be provided hopefully easily enough, and is just a matter of finding the right Docker images and testing.
+At this point, this project is made to be used, and has only been tested with Raspberry Pi. The images it uses are made for the Raspberry and its *arm32v7* architecture. Support for other devices and architecture could be provided hopefully easily enough, and is just a matter of finding the right Docker images and testing. In the future, I would like to add support for other devices.
 
 ## Running the cluster
 Although effort has been put to make the setup easy to execute by using the [Ansible](https://www.ansible.com/) tool, there are some manual steps that need to be made.
@@ -57,12 +57,12 @@ Create `hacluster` group in the `/etc/ansible/hosts` file. Add your cluster node
 ```
 
 ### Setup HAHA cluster playbook
-This playbook adds the nodes to a trusted Gluster pool, creates a Gluster volume and mounts it on all nodes. It then copies the default configuration files for Home Assistant and Mosquitto. Then, it sets up a cron job on all nodes to periodically restart the Avahi service. Finally, it initializes a Docker swarm, joins all nodes to it and starts the HAHA stack on it. Run the playbook using the command below.
+This playbook is what sets up everything - it adds the nodes to a trusted Gluster pool, creates a Gluster volume and mounts it on all nodes. It then copies the default configuration files for Home Assistant and Mosquitto. Then, it sets up a cron job on all nodes to periodically restart the Avahi service. Finally, it initializes a Docker swarm, joins all nodes to it and starts the HAHA stack on it. Run the playbook using the command below.
 
 `$ ansible-playbook setup-hacluster.yml`
 
 ### Initializing the Galera Cluster
-After running the [Ansible](https://www.ansible.com/) playbook, the cluster is not ready for use yet. The Galera Cluster requires some manual initialization. Follow the steps below. For these, you can use the provided [Portainer](https://www.portainer.io/) container manager, included in the `docker-compose.yml`.
+After running the [Ansible](https://www.ansible.com/) playbook, the cluster is not ready for use yet. The Galera Cluster requires some manual initialization. Follow the steps below. For these, you can use the provided [Portainer](https://www.portainer.io/) container manager, included in the `docker-compose.yml` (runs on port 9000).
 
 1. Wait until the initialization of the container `mariadb-seed` succeeds (container is healthy)
 2. Raise the number of replicas of the `mariadb-node` service from zero to the number of nodes in the cluster.
@@ -79,14 +79,14 @@ This playbook stops the HAHA stack, unmounts the gluster volumes and removes the
 ## Extremely high availability mode
 When reacting to a failure inside the cluster, the Docker swarm scheduler might take a while to start and initialize a new Home Assistant or Mosquitto container. More so, if the new node doesn't have the Docker image it needs, in which case it needs to download it.
 
-A solution is to speculatively run multiple instances of Home Assistant at the same time, so that the backup is always running. For that, you need to raise the replicas of the `homeassistant` service to two. In background, both instances will write to the same storage backend in the [GlusterFS](https://www.gluster.org/) volume, which might seem troubling at first, but in practice there weren't any apparent problems.
+A solution is to speculatively run multiple instances of Home Assistant at the same time, so that the backup is always running. For that, you need to raise the replicas of the `homeassistant` service to two. In background, both instances will write, in real time, to the same storage backend in the [GlusterFS](https://www.gluster.org/) volume, which might seem troubling at first, but in practice there weren't any apparent problems and [GlusterFS](https://www.gluster.org/) handles it pretty well.
 
 Running two instances of the [Mosquitto](https://mosquitto.org/) broker simultaneously would require bridging them, which is not a part of this project. An alternative could be to use the ESPHome's [Native API](https://esphome.io/components/api.html) as a replacement of MQTT.
 
 ## Running with 2 devices
 Although unsupported by both [Docker swarm](https://docs.docker.com/engine/swarm/) and [GlusterFS](https://www.gluster.org/) due to reasons explained in the [limitations](#limitations) section, the cluster *can* technically run on just two nodes.
 
-However, you will lose the automatic recovery of using 3+ devices. Docker swarm will fail to start replacement containers in case of a node failure, so you will need to apply the principles from the [extremely high availabilty](#extremely-high-availability-mode) section to make sure that the system will stay functioning.
+However, you will lose the automatic recovery of using 3+ devices. Docker swarm will fail to start replacement containers in case of a node failure (it will basically freeze), so you will need to apply the principles from the [extremely high availabilty](#extremely-high-availability-mode) section, to make sure that there will remain at least one container of each service running. In practice, this means running two Home Assistant containers simultaneously, by setting the replicas count to 2 instead of 1 during the initialization.
 
 Moreover, a split brain scenario may occur in the [GlusterFS](https://www.gluster.org/) volume if only one of two nodes are online. The volume will still be working, but a [manual recovery](https://docs.gluster.org/en/latest/Troubleshooting/resolving-splitbrain/) will be needed when re-adding the lost node.
 
