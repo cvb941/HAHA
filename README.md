@@ -25,7 +25,7 @@ A solution would be to include all of the nodes' addresses in the sensor's firmw
 
 Other than setting up an own DNS server, a working solution is to set the **same hostnames** to all of the nodes. This way, a sensor will always resolve an IP address, through mDNS, to one of the nodes.
 
-Experimentally, when turning of the node to which a sensor, flashed with [ESPHome](https://esphome.io/index.html), was connected, the sensor was stuck in trying to resolve a different IP address. A solution to this is to restart the Avahi service on any of the running nodes and the sensor magically connects. Because of this, a cron job is setup with [Ansible](https://www.ansible.com/) to restart the Avahi service every minute.
+Experimentally, when turning off the node to which a sensor, flashed with [ESPHome](https://esphome.io/index.html), was connected, the sensor was stuck in trying to resolve a different IP address. A solution to this is to restart the Avahi service on any of the running nodes and the sensor magically connects. Because of this, a cron job is setup with [Ansible](https://www.ansible.com/) to restart the Avahi service every minute.
 
 
 ## Limitations
